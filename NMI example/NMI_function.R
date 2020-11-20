@@ -3,7 +3,7 @@
 ### Requires the packages rgeos and sp 
 ### foc.pop = SpatialPoints object of the population of interest in the environmental space
 ### niche = SpatialPolygon object used to delimit the margin of the niche in the environmental space
-
+###
 NMI<-function(foc.pop,niche){
 
   require(sp)
