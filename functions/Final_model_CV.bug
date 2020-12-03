@@ -1,0 +1,94 @@
+model{
+  
+	##################
+    ### Likelihood ###
+	##################
+	
+	for(i in 1:Nobs){
+		Y[i] ~ dbern(psi[i])
+		logit(psi[i]) <- mean.alpha + # Intercept
+						 mean.beta*suitability[i] + # Effect of the suitability measure (NMI or HS)
+						 alpha1[id1[i]] + # species-wise effect 
+						 alpha2[id2[i]] + # realm-wise effect
+						 alpha3[id3[i]] + # family-wise effect 
+						 beta.island*Island[i] + # Island effect
+						 inprod(Xtrait[i,], beta.trait[]) # trait effects
+						 
+		#log-likelihood (if one wants to perform model comparison using WAIC or LOO)
+		log.like[i] <- logdensity.bin(Y[i], psi[i], 1)
+	}
+	
+	##############
+    ### Priors ###
+	##############
+	
+	### Priors for intercept, island and slope of the suitability measure
+	mean.alpha ~ dnorm(0,0.1) # main intercept
+	mean.beta ~ dnorm(0,0.1) # slope for the suitability measure
+	beta.island ~ dnorm(0,0.1) # island 
+	
+	### Prior for species-wise effects	
+	for(i in 1:Nsp){ 
+		alpha1[i] ~ dnorm(alpha3[id4[i]], tau.sp) # species-wise intercepts nested within families		
+	}
+	tau.sp <- pow(sd.sp,-2)
+	sd.sp ~ dt(0,1,1)T(0,) # standard-dev for species-wise intercepts
+	
+	### Priors for realm-wise effects
+	for(i in 1:Nrealm){
+		alpha2[i] ~ dnorm(0, tau.realm) # realm-wise intercepts
+	}
+	tau.realm <- pow(sd.realm,-2)
+	sd.realm ~ dt(0,1,1)T(0,) # standard-dev for realm-wise intercepts
+	
+	### Priors for family-wise effects
+	for(i in 1:Nfam){ 
+		alpha3[i] ~ dnorm(0, tau.fam) # family-wise intercepts 
+	}
+	tau.fam <- pow(sd.fam,-2)
+	sd.fam ~ dt(0,1,1)T(0,) # standard-dev for family-wise intercepts		
+
+	### Priors for trait effects
+	for(i in 1:Nobs){ 
+		for(j in 1:Ntrait){
+			Xtrait[i,j] ~ dnorm(nu[j], tau.trait[j]) # generate data for missing values following an MCAR procedure
+		}
+	}	
+	for(i in 1:Ntrait){
+		beta.trait[i] ~ dnorm(0, 0.1)  # prior for slope coefficients related to trait
+		nu[i] ~ dnorm(0, 0.1) # mean of the distribution for trait i (centered on zero because the variables are scaled)
+		tau.trait[i] <- pow(sd.trait[i], -2)
+		sd.trait[i] ~ dt(0,1,1)T(0,) # std-dev of the distribution for trait i
+	}
+	
+	###################################
+	### Posterior predictive checks ###
+	###################################
+	
+	### Compute squared standardized residuals for observed (Y) and replicated (Y.new) data
+	for(i in 1:Nsamp){ 		
+		pred[i] <- psi[ID.samp[i]]
+		res1[i] <- pow(Y[ID.samp[i]]-pred[i],2)/(pred[i]*(1-pred[i])+0.01)
+    
+		Y.new[i] ~ dbern(psi[ID.samp[i]])
+		res2[i] <- pow(Y.new[i]-pred[i],2)/(pred[i]*(1-pred[i])+0.01)
+    }
+    
+    ### Sum of squared standardized residuals
+    fit <- sum(res1[])
+    fit.new <- sum(res2[])
+    
+    ### Bayesian P-value
+    test <- step(fit.new-fit)
+    bpvalue <- mean(test)	
+	
+	##################################################
+	### Posterior predictions for model evaluation ###
+	##################################################
+
+	### Get predicted presence-absence data
+	for(i in 1:Npred){
+		Y.pred[i] ~ dbern(psi[ID.pred[i]])
+	}
+   
+}
