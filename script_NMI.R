@@ -17,7 +17,7 @@ require(runjags)
 require(ggplot2)
 require(bayesplot)
 require(boa)
-require(loo)
+require(mcmcplots)
 
 ### Define workdir
 PATH="C:/Users/Olivier/Google Drive/ecospat/Mammal NCN-matching/Gitub_files"
@@ -92,7 +92,7 @@ for (sp in sp.list){
 
 ### Save the data
 
-saveRDS(allData, file=paste0("data/allData_nmi_", grain,"min_",envelope,level))
+saveRDS(allData, file=paste0("data/allData_nmi_", grain,"min_",envelope,level,".rData"))
 
 t2<-Sys.time()
 t2-t1 # 1.643185 hours with CPU 2.6 GHz / RAM 8 Go 
@@ -188,15 +188,30 @@ x<-intros$success
 b<-boxplot(y~x,ylim=c(-2,1), outline=F,horizontal = TRUE, ylab= "establishment sucess", 
            xlab="NMI",border=c("red","darkgreen"),frame=FALSE,main=sp)
 
+
 ################################################################################################
 #  Figure 2B -  boxplots of NMI and establishment outcome                                      #
 ################################################################################################
 
 y<-allData$nmi
 x<-allData$success
-b<-boxplot(y~x,ylim=c(-2,1), outline=F,horizontal = TRUE, ylab= "establishment sucess", 
+b<-boxplot(y~x,ylim=c(-11,1), outline=T,horizontal = TRUE, ylab= "establishment sucess", 
            xlab="NMI",border=c("red","darkgreen"),frame=FALSE)
+
+# wilcoxon rank sum test U
 wilcox.test(y~x)
+
+# number and percent of introductions with NMI>0 
+sum(y>0)
+sum(y>0)/length(y)
+
+# number and percent of successful introductions with NMI>0 
+sum(y[x==1]>0)
+sum(y[x==1]>0)/length(y[x==1])
+
+# number and percent of successful introductions with NMI>0 
+sum(y[x==0]>0)
+sum(y[x==0]>0)/length(y[x==0])
 
 ################################################################################################
 #  Bayesian Mixed Model               (15.11152 mins with CPU 2.6 GHz / RAM 8 Go)              #
@@ -206,7 +221,7 @@ t1<-Sys.time()
 
 ### Define global settings
 CV <- FALSE # no cross validation -> model run with the full dataset
-allData<-readRDS(paste0("data/allData_nmi_", grain,"min_",envelope,level))
+allData<-readRDS(paste0("data/allData_nmi_", grain,"min_",envelope,level,".rData"))
 
 ### Create directories to store JAGS data and JAGS outputs
 if(!file.exists("JAGS_outputs")) dir.create("JAGS_outputs")
@@ -347,7 +362,7 @@ Predictors <- with(data.jags, cbind(suitability, Island, Xtrait))
 ### Get slope coefficients
 all.coef <- comb[, c("mean.beta", "beta.island", "beta.trait[1]", "beta.trait[2]", "beta.trait[3]", 
                      "beta.trait[4]", "beta.trait[5]", "beta.trait[6]", "beta.trait[7]", "beta.trait[8]")] 
-colnames(all.coef) <- c(foc.resp, "Island", trait.names)
+colnames(all.coef) <- c("NMI", "Island", trait.names)
 
 ### Get the intercept
 intercept <- comb[,"mean.alpha"]
@@ -390,5 +405,138 @@ posterior.plot <- mcmc_areas(all.coef, prob=0.95)+
         plot.subtitle=element_text(size=18, color="black", face="plain"))
 print(posterior.plot)
 
+
 t2<-Sys.time()
 t2-t1 # 15.11152 mins with CPU 2.6 GHz / RAM 8 Go 
+
+#------------ Draw elements of Figure S5 (these elements were then arranged altogether using illustrator)
+
+###############
+### Panel A ###
+###############
+
+### Species-wise estimates
+
+par(mar=c(5,6,4,2))
+sp.estimates <- comb[,grep("alpha1",colnames(comb))]
+caterplot(sp.estimates, reorder=F, quantiles=list(outer=c(0.025,0.975), inner=c(0.025,0.975)),
+          lwd=c(1.5,1.5), labels=gsub("_"," ",lev.sp), style="plain")
+abline(v=0, lty=2)
+title(expression(paste("Species coefficients(", alpha[s(fam)], ")")))
+
+
+### Family-wise estimates
+par(mar=c(5,6,4,2))
+family.estimates <- comb[,grep("alpha3",colnames(comb))]
+caterplot(family.estimates, reorder=F, quantiles=list(outer=c(0.025,0.975), inner=c(0.025,0.975)),
+          lwd=c(1.5,1.5), labels=gsub("_"," ",lev.fam), style="plain")
+abline(v=0, lty=2)
+title(expression(paste("Family coefficients(", alpha[fam], ")")))
+
+### Region-wise estimates
+
+par(mar=c(5,5,4,2))
+region.estimates <- comb[,grep("alpha2",colnames(comb))]
+caterplot(region.estimates, reorder=F, quantiles=list(outer=c(0.025,0.975), inner=c(0.025,0.975)),
+          lwd=c(1.5,1.5), labels=gsub("_"," ",lev.realm), style="plain")
+abline(v=0, lty=2)
+title(expression(paste("region coefficients(", alpha[region], ")")))
+
+###############
+### Panel B ###
+###############
+
+par(mar=c(5,7,4,2))
+names <- c(foc.resp, "Island", trait.names)
+caterplot(all.coef, reorder=F, quantiles=list(outer=c(0.025,0.975), inner=c(0.025,0.975), 
+                                              lwd=c(1,1)), labels=names, style="plain")
+abline(v=0,lty=2)
+title("95% Highest Posterior Density Intervals")
+
+###############
+### Panel C ###
+###############
+
+par(mar=c(5,7,4,2))
+
+### Posterior distribution of NMI effect
+post.coef <- comb[,"mean.beta"]
+densplot(post.coef, main="Posterior distribution of NMI effect", ylab="Density")
+abline(v=0, lty=2)
+prob <- length(which(post.coef > 0)) / length(post.coef) * 100
+text(x=0.6, y=3.0, paste("Posterior probability \n for positive effect = ", round(prob,2), "%"))
+
+### Posterior distribution of success probability
+post.inter <- comb[,"mean.alpha"]
+densplot(plogis(post.inter), main="Posterior distribution of success probability", ylab="Density")
+
+###############
+### Panel D ###
+###############
+
+### Get original data to plot observations
+variables.unscaled <- readRDS(paste0("data/allData_nmi_", grain,"min_",envelope,level,".rData"))
+variables.unscaled[,c(9:13)] <- apply(variables.unscaled[,c(9:13)], 2, function(x)log(x+1)) #nat_range"   "intro_date"  "intro_effo"  "weaning_ag" "litter_siz"
+variables.unscaled <- variables.unscaled[,c(4,17,9:16)] 
+
+### Scale variables for predictions
+variables.scaled <- variables.unscaled
+variables.scaled[,2:ncol(variables.scaled)] <- apply(variables.scaled[,2:ncol(variables.scaled)], 2, scale)
+
+### Get coefficients
+all.coef <- comb[,grep("beta.trait", colnames(comb))]
+all.coef <- cbind(comb[,"mean.beta"], all.coef)
+
+### Get slope coefficients and main intercept
+all.coef <- comb[, c("mean.beta", "beta.trait[1]", "beta.trait[2]", "beta.trait[3]", 
+                     "beta.trait[4]", "beta.trait[5]", "beta.trait[6]", "beta.trait[7]", "beta.trait[8]")] 
+
+inter <- comb[,"mean.alpha"]
+
+### Perform predictions
+df.pred <- NULL
+new.names <- c("nmi",trait.names)
+
+for(i in 2:ncol(variables.scaled)){
+  
+  trait.seq1 <- seq(min(variables.unscaled[,i],na.rm=T), max(variables.unscaled[,i], na.rm=T), length.out=1000)
+  trait.seq2 <- seq(min(variables.scaled[,i],na.rm=T), max(variables.scaled[,i], na.rm=T), length.out=1000)
+  
+  coef <- all.coef[,(i-1)]
+  
+  post.trait <- NULL
+  post.trait <- t(plogis(outer(coef, trait.seq2, "*") + inter))
+  
+  med.trait <- apply(post.trait, 1, median)
+  hpd.trait <- apply(post.trait, 1, quantile, probs=c(.025,.975))
+  min.trait <- hpd.trait[1,]
+  max.trait <- hpd.trait[2,]
+  tmp <- data.frame(cbind(med=med.trait, min=min.trait, max=max.trait, val.trait=trait.seq1))
+  tmp1 <- cbind(tmp, Trait=new.names[(i-1)])
+  
+  if(i==2) df.pred <- tmp1  else df.pred <- rbind(df.pred, tmp1)
+  
+  print(i)
+}
+
+### Re-arrange observed data to feed ggplot
+DF1 <- variables.unscaled[,-1]
+colnames(DF1) <- new.names
+DF1 <- melt(DF1)
+DF1 <- cbind(DF1, rep(variables.unscaled$success, 9))
+colnames(DF1)[c(1,3)]=c("Trait","success")
+
+Predictions <- ggplot(df.pred)+
+  geom_ribbon(aes(ymin=min, ymax=max, x=val.trait), alpha=0.8, linetype=0, fill="lightgrey")+
+  geom_line(aes(y=med, x=val.trait))+
+  geom_point(data=DF1, aes(y=success, x=value))+
+  theme_bw()+
+  facet_wrap(~Trait, ncol=3, scales="free_x")+
+  theme(strip.background=element_blank(), legend.position="none", strip.text.y=element_blank(), 
+        strip.text.x=element_text(size=16), axis.text.x=element_text(size=14, color="black", face="plain"), 
+        axis.text.y=element_text(size=14, color="black", face="plain"), 
+        plot.title=element_text(size=24, color="black", face="plain"), 
+        plot.subtitle=element_text(size=18, color="black", face="plain"), 
+        axis.title.x=element_text(size=14), axis.title.y=element_text(size=18), panel.spacing=unit(1.2, "lines"))+
+  labs(x="", y="Success probability")+ ggtitle("Posterior relationships", "with 95% highest posterior density intervals")
+print(Predictions)
