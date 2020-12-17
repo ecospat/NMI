@@ -18,6 +18,7 @@ require(ggplot2)
 require(bayesplot)
 require(boa)
 require(mcmcplots)
+require(reshape2)
 
 ### Define workdir
 PATH="C:/Users/Olivier/Google Drive/ecospat/Mammal NCN-matching/Gitub_files"
@@ -326,65 +327,53 @@ fam.par <- grep("alpha3", colnames(out[[1]]))
 diagnostic <- gelman.diag(out[,c(hyper.par, sp.par, realm.par, fam.par)], autoburnin=F, multivariate=F)
 any(diagnostic$psrf[,1]>1.1) # All parameters must have values below 1.1
 
-#------------ Evaluate models fit
 
-### Posterior predictive checks (Bayesian p-value) 
+#------------ Evaluate models fit and explanatory power
+
+### Posterior predictive checks (Bayesian p-value)
 comb <- combine.mcmc(out)
 mean(comb[,"bpvalue"]) # a value close to 0 or 1 indicates a lack of fit
 
-### compute sensitivity, specificity and TSS
-Y.obs <- na.omit(data.jags$Y) # Observed PA data
-Y.pred <- comb[,paste0("Y.pred[", 1:length(ID.pred), "]")] # Predicted PA data
-Sensitivity <- Specificity <- TSS <- numeric()
-
-# Compute metrics for all samples of the posterior predictive distribution
-for(i in 1:nrow(Y.pred)){ 
-  tmp <- table(Y.pred[i,], Y.obs)
-  if(nrow(tmp)==1){
-    if(rownames(tmp)=="1") tmp <- rbind(c(0,0),tmp) else tmp <- rbind(tmp,c(0,0)) 
-  }
-  if(ncol(tmp)==1){
-    if(colnames(tmp)=="1") tmp <- cbind(c(0,0),tmp) else tmp <- cbind(tmp,c(0,0)) 
-  }
-  Sensitivity[i] <- tmp[2,2]/(tmp[2,2]+tmp[1,2])
-  Specificity[i] <- tmp[1,1]/(tmp[2,1]+tmp[1,1])
-  TSS[i] <- Sensitivity[i] + Specificity[i] - 1
-}
-TSS <- median(TSS)
-Sensitivity <- median(Sensitivity)
-Specificity <- median(Specificity)
-
-#------------ Compute marginal and conditional R-square
-
-### Get data for predictors
+### Get observed data
+Y.obs <- data.jags$Y
 Predictors <- with(data.jags, cbind(suitability, Island, Xtrait))
 
-### Get slope coefficients
-all.coef <- comb[, c("mean.beta", "beta.island", "beta.trait[1]", "beta.trait[2]", "beta.trait[3]", 
-                     "beta.trait[4]", "beta.trait[5]", "beta.trait[6]", "beta.trait[7]", "beta.trait[8]")] 
-colnames(all.coef) <- c("NMI", "Island", trait.names)
+### Get coefficients
+all.coef <- comb[, c("mean.beta", "beta.island", "beta.trait[1]", "beta.trait[2]", "beta.trait[3]",
+                     "beta.trait[4]", "beta.trait[5]", "beta.trait[6]", "beta.trait[7]", "beta.trait[8]")]
+intercept <- comb[, "mean.alpha"]
 
-### Get the intercept
-intercept <- comb[,"mean.alpha"]
-
-### Predict occurrence probabilities
+### Predictions related to fixed effects
 l1 <- list()
 for(i in 1:ncol(all.coef)) l1[[i]] <- outer(all.coef[,i], Predictors[,i], "*")
 tmp.pred <- Reduce(`+`, lapply(l1, function(x) replace(x, is.na(x), 0))) # deal with missing trait values
 tmp.pred <- tmp.pred*NA^!Reduce(`+`, lapply(l1, function(x) !is.na(x)))
-pred.psi <- plogis(intercept + tmp.pred)
+pred.psi <- intercept + tmp.pred
 
-### Compute marginal and conditional R²
-err <- sweep(pred.psi, 2, data.jags$Y, FUN="-")
-varFixed <- apply(pred.psi, 1, var)
-varResidual <- apply(err, 1, var) # get the residual variance 
-varRandom <- plogis(comb[,"sd.sp"]^2 + comb[,"sd.realm"]^2 + comb[,"sd.fam"]^2)   # get the variance of random effects
+### Add random effects to predictions
+for(i in 1:ncol(pred.psi)){
+  pred.psi[,i] <- pred.psi[,i] + comb[, paste0("alpha1[", ID1[i], "]")] + comb[, paste0("alpha2[", ID2[i], "]")] +
+    comb[, paste0("alpha3[", ID3[i], "]")]
+}
 
-marginalR2 <- varFixed/(varFixed + varRandom + varResidual)
-conditionalR2 <- (varRandom + varFixed)/(varFixed + varRandom + varResidual)
+### Inverse logit
+pred.psi <- plogis(pred.psi)
 
-marginalR2 <- median(marginalR2)
-conditionalR2 <- median(conditionalR2)
+### Median of the posterior
+pred.psi <- apply(pred.psi, 2, median)
+
+### Compute max sensitivity specificity and TSS
+Tresh <- seq((min(pred.psi)+0.05), (max(pred.psi)-0.05), 0.01)
+TSS <- sensi <- speci <- numeric()
+for(i in 1:length(Tresh)){
+  tmp.pres <- ifelse(pred.psi<Tresh[i], 0, 1)
+  tmp.tab <- table(tmp.pres, Y.obs)
+  sensi[i] <- tmp.tab[2,2]/(tmp.tab[2,2]+tmp.tab[1,2])
+  speci[i] <- tmp.tab[1,1]/(tmp.tab[2,1]+tmp.tab[1,1])
+  TSS[i] <- sensi[i] + speci[i]  - 1
+}
+out.tss <- cbind(Tresh, sensi, speci, TSS)
+Max.TSS <- out.tss[which.max(out.tss[,4]),]
 
 #------------ Compute posterior probabilities and 95% Highest posterior density intervals of slope coefficients
 
@@ -394,7 +383,7 @@ posterior.prob <- ifelse(medians<0,
                          apply(all.coef, 2, function(x)length(which(x>0))/length(x)))
 HPD95 <- apply(all.coef, 2, function(x)boa.hpd(x, alpha=0.05)) 
 
-#------------ Draw Figure 3 in the main text
+#------------ Draw Figure 3
 
 posterior.plot <- mcmc_areas(all.coef, prob=0.95)+
   geom_vline(xintercept=0, linetype="dashed")+
@@ -405,28 +394,22 @@ posterior.plot <- mcmc_areas(all.coef, prob=0.95)+
         plot.subtitle=element_text(size=18, color="black", face="plain"))
 print(posterior.plot)
 
-
-t2<-Sys.time()
-t2-t1 # 15.11152 mins with CPU 2.6 GHz / RAM 8 Go 
-
 #------------ Draw elements of Figure S5 (these elements were then arranged altogether using illustrator)
 
-###############
-### Panel A ###
-###############
+par(mar=c(5,6,4,2))
+
+############### Panel A - estimates
 
 ### Species-wise estimates
 
-par(mar=c(5,6,4,2))
 sp.estimates <- comb[,grep("alpha1",colnames(comb))]
 caterplot(sp.estimates, reorder=F, quantiles=list(outer=c(0.025,0.975), inner=c(0.025,0.975)),
           lwd=c(1.5,1.5), labels=gsub("_"," ",lev.sp), style="plain")
 abline(v=0, lty=2)
 title(expression(paste("Species coefficients(", alpha[s(fam)], ")")))
 
-
 ### Family-wise estimates
-par(mar=c(5,6,4,2))
+
 family.estimates <- comb[,grep("alpha3",colnames(comb))]
 caterplot(family.estimates, reorder=F, quantiles=list(outer=c(0.025,0.975), inner=c(0.025,0.975)),
           lwd=c(1.5,1.5), labels=gsub("_"," ",lev.fam), style="plain")
@@ -435,29 +418,21 @@ title(expression(paste("Family coefficients(", alpha[fam], ")")))
 
 ### Region-wise estimates
 
-par(mar=c(5,5,4,2))
 region.estimates <- comb[,grep("alpha2",colnames(comb))]
 caterplot(region.estimates, reorder=F, quantiles=list(outer=c(0.025,0.975), inner=c(0.025,0.975)),
           lwd=c(1.5,1.5), labels=gsub("_"," ",lev.realm), style="plain")
 abline(v=0, lty=2)
 title(expression(paste("region coefficients(", alpha[region], ")")))
 
-###############
-### Panel B ###
-###############
+############### Panel B - 95% Highest Posterior Density Intervals
 
-par(mar=c(5,7,4,2))
-names <- c(foc.resp, "Island", trait.names)
+names <- c("NMI", "Island", trait.names)
 caterplot(all.coef, reorder=F, quantiles=list(outer=c(0.025,0.975), inner=c(0.025,0.975), 
                                               lwd=c(1,1)), labels=names, style="plain")
 abline(v=0,lty=2)
 title("95% Highest Posterior Density Intervals")
 
-###############
-### Panel C ###
-###############
-
-par(mar=c(5,7,4,2))
+############### Panel C - posterior distributions
 
 ### Posterior distribution of NMI effect
 post.coef <- comb[,"mean.beta"]
@@ -470,9 +445,7 @@ text(x=0.6, y=3.0, paste("Posterior probability \n for positive effect = ", roun
 post.inter <- comb[,"mean.alpha"]
 densplot(plogis(post.inter), main="Posterior distribution of success probability", ylab="Density")
 
-###############
-### Panel D ###
-###############
+############### Panel D - posterior relationships with 95% highest posterior density intervals 
 
 ### Get original data to plot observations
 variables.unscaled <- readRDS(paste0("data/allData_nmi_", grain,"min_",envelope,level,".rData"))
@@ -540,3 +513,6 @@ Predictions <- ggplot(df.pred)+
         axis.title.x=element_text(size=14), axis.title.y=element_text(size=18), panel.spacing=unit(1.2, "lines"))+
   labs(x="", y="Success probability")+ ggtitle("Posterior relationships", "with 95% highest posterior density intervals")
 print(Predictions)
+
+t2<-Sys.time()
+t2-t1 # 15.11152 mins with CPU 2.6 GHz / RAM 8 Go 
