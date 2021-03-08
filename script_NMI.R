@@ -113,8 +113,6 @@ sp.shp<- all.shp[which(all.shp$binomial==sp),]
 sp.scores<-suprow(pca,raster::extract(clim,sp.shp))$li
 
 # extract scores of introductions in PCA space
-intros<-all.intros[which(all.intros$sp==sub(" ","_",sp)),c(4:5,14)]
-intros.scores<-suprow(pca,extract(clim,intros[,1:2]))$li
 
 intros<-all.intros[which(all.intros$sp==sub(" ","_",sp)),]
 intros.scores<-suprow(pca,raster::extract(clim,intros[,2:3]))$li
